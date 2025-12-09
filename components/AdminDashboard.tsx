@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Book, LoanRequest } from '../types';
 import { StorageService } from '../services/storage';
-import { Plus, Scan, BookOpen, Save, X, Check, Info, Pencil, Search, Filter, Loader2, ClipboardList, Clock, AlertTriangle, CheckCircle, FileText, Bell, Calendar } from 'lucide-react';
+import { Plus, Scan, BookOpen, Save, X, Check, Info, Pencil, Search, Filter, Loader2, ClipboardList, Clock, AlertTriangle, CheckCircle, FileText, Bell, Calendar, Printer } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
   const [view, setView] = useState<'BOOKS' | 'SCAN' | 'LOANS'>('BOOKS');
@@ -26,6 +26,9 @@ export const AdminDashboard: React.FC = () => {
 
   // Book Detail Modal State
   const [selectedBookDetail, setSelectedBookDetail] = useState<Book | null>(null);
+
+  // Report Modal State (Replaces window.open for APK compatibility)
+  const [viewingReport, setViewingReport] = useState<LoanRequest | null>(null);
 
   // Scanner State (Simulated for Browser safety)
   const [scannedData, setScannedData] = useState<LoanRequest | null>(null);
@@ -193,123 +196,47 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Generate PDF Report using browser print
-  const generateReport = (loan: LoanRequest) => {
-    const { isOverdue } = getLoanStatusInfo(loan);
-    const statusText = isOverdue ? "ATRASADO" : "ACTIVO";
-    const statusColor = isOverdue ? "#dc2626" : "#16a34a"; // Red or Green
+  // Safe Report Generation for APKs (No window.open)
+  const openReportModal = (loan: LoanRequest) => {
+    setViewingReport(loan);
+  };
 
-    const reportContent = `
-      <html>
-        <head>
-          <title>Reporte de Préstamo - ${loan.id}</title>
-          <style>
-            body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 40px; color: #333; max-width: 800px; margin: 0 auto; }
-            .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 20px; margin-bottom: 40px; }
-            .logo { font-size: 28px; font-weight: bold; color: #2563eb; letter-spacing: -1px; }
-            .subtitle { font-size: 14px; color: #6b7280; margin-top: 5px; text-transform: uppercase; letter-spacing: 2px; }
-            .meta { text-align: right; font-size: 12px; color: #9ca3af; margin-bottom: 20px; }
-            .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 25px; margin-bottom: 20px; background: #f9fafb; }
-            .row { display: flex; justify-content: space-between; margin-bottom: 15px; border-bottom: 1px dashed #e5e7eb; padding-bottom: 10px; }
-            .row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-            .label { font-weight: bold; color: #4b5563; font-size: 12px; text-transform: uppercase; }
-            .value { font-size: 16px; font-weight: 500; color: #111827; }
-            .status-badge { 
-              display: inline-block; padding: 8px 16px; border-radius: 50px; 
-              color: white; font-weight: bold; font-size: 14px; background-color: ${statusColor};
-              text-align: center; margin-top: 10px;
-            }
-            .footer { margin-top: 60px; text-align: center; font-size: 11px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 20px; }
-            @media print {
-              body { padding: 0; }
-              .no-print { display: none; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="logo">BiblioTech</div>
-            <div class="subtitle">Reporte Oficial de Préstamo</div>
-          </div>
-
-          <div class="meta">
-            Generado el: ${new Date().toLocaleString()} <br/>
-            ID Transacción: ${loan.id.slice(0, 8)}...
-          </div>
-
-          <div class="card">
-            <div style="margin-bottom: 15px; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">
-              <span class="label">Información del Alumno</span>
-            </div>
-            <div class="row">
-              <span class="label">Nombre</span>
-              <span class="value">${loan.studentName}</span>
-            </div>
-            <div class="row">
-              <span class="label">Matrícula</span>
-              <span class="value">${loan.studentMatricula}</span>
-            </div>
-          </div>
-
-          <div class="card">
-            <div style="margin-bottom: 15px; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">
-              <span class="label">Información del Libro</span>
-            </div>
-            <div class="row">
-              <span class="label">Título</span>
-              <span class="value">${loan.bookTitle}</span>
-            </div>
-             <div class="row">
-              <span class="label">ID de Sistema</span>
-              <span class="value">${loan.bookId}</span>
-            </div>
-          </div>
-
-          <div class="card">
-            <div style="margin-bottom: 15px; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">
-              <span class="label">Detalles del Préstamo</span>
-            </div>
-             <div class="row">
-              <span class="label">Fecha Recolección</span>
-              <span class="value">${loan.pickupDate}</span>
-            </div>
-             <div class="row">
-              <span class="label">Fecha Límite Entrega</span>
-              <span class="value">${loan.returnDate}</span>
-            </div>
-            <div style="text-align: center; margin-top: 20px;">
-              <span class="label" style="display: block; margin-bottom: 5px;">Estado Actual</span>
-              <span class="status-badge">${statusText}</span>
-            </div>
-          </div>
-
-          <div class="footer">
-            <p>Este documento es un comprobante generado por el sistema BiblioTech.</p>
-            <p>BiblioTech © 2024</p>
-          </div>
-
-          <script>
-            window.onload = function() { window.print(); }
-          </script>
-        </body>
-      </html>
-    `;
-
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(reportContent);
-      printWindow.document.close();
-    } else {
-      alert("Por favor habilita las ventanas emergentes para generar el reporte.");
-    }
+  const handlePrint = () => {
+    window.print();
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto relative">
+    <div className="p-6 max-w-6xl mx-auto relative print:p-0 print:m-0 print:w-full">
       
+      {/* CSS para Impresión: Oculta todo lo que no sea el área de impresión */}
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          #printable-report, #printable-report * {
+            visibility: visible;
+          }
+          #printable-report {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            margin: 0;
+            padding: 20px;
+            background: white;
+            border: none;
+            box-shadow: none;
+          }
+          .no-print {
+            display: none !important;
+          }
+        }
+      `}</style>
+
       {/* Toast Notification for Due Soon Loans */}
       {showNotification && dueSoonLoans.length > 0 && (
-        <div className="fixed bottom-4 right-4 bg-yellow-50 border-l-4 border-yellow-400 p-4 shadow-2xl rounded-r max-w-sm z-50 animate-slide-up flex items-start">
+        <div className="fixed bottom-4 right-4 bg-yellow-50 border-l-4 border-yellow-400 p-4 shadow-2xl rounded-r max-w-sm z-50 animate-slide-up flex items-start no-print">
           <Bell className="w-5 h-5 text-yellow-600 mr-3 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <h4 className="font-bold text-yellow-800 text-sm">Próximos Vencimientos</h4>
@@ -332,7 +259,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 no-print">
         <h1 className="text-3xl font-bold text-gray-800">Panel de Administración</h1>
         <div className="flex bg-white rounded-lg p-1 shadow-sm border border-gray-200">
           <button 
@@ -361,7 +288,7 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {view === 'BOOKS' && (
-        <div>
+        <div className="no-print">
           {!isAdding ? (
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
               <button 
@@ -555,7 +482,7 @@ export const AdminDashboard: React.FC = () => {
 
       {/* LOANS VIEW */}
       {view === 'LOANS' && (
-        <div className="space-y-8">
+        <div className="space-y-8 no-print">
            {/* Stats Overview */}
            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100 flex items-center">
@@ -603,9 +530,9 @@ export const AdminDashboard: React.FC = () => {
                       </div>
                       <div className="flex gap-2">
                         <button
-                          onClick={() => generateReport(loan)}
+                          onClick={() => openReportModal(loan)}
                           className="bg-gray-100 text-gray-700 px-3 py-1 rounded text-sm hover:bg-gray-200 font-medium flex items-center"
-                          title="Generar Reporte PDF"
+                          title="Ver Reporte"
                         >
                            <FileText className="w-4 h-4 mr-1" /> Reporte
                         </button>
@@ -642,9 +569,9 @@ export const AdminDashboard: React.FC = () => {
                         </div>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => generateReport(loan)}
+                            onClick={() => openReportModal(loan)}
                             className="bg-gray-100 text-gray-700 px-3 py-1 rounded text-sm hover:bg-gray-200 font-medium flex items-center"
-                            title="Generar Reporte PDF"
+                            title="Ver Reporte"
                           >
                             <FileText className="w-4 h-4 mr-1" /> Reporte
                           </button>
@@ -679,14 +606,14 @@ export const AdminDashboard: React.FC = () => {
                        <th className="p-4 font-medium">Alumno</th>
                        <th className="p-4 font-medium">Libro</th>
                        <th className="p-4 font-medium">Recogido</th>
-                       <th className="p-4 font-medium">Entrega</th>
+                       <th className="p-4 font-medium">Fecha Devolución Estimada</th>
                        <th className="p-4 font-medium">Estado</th>
                        <th className="p-4 font-medium text-right">Acción</th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100">
                      {activeLoans.map(loan => {
-                       const { isOverdue, isDueSoon } = getLoanStatusInfo(loan);
+                       const { isOverdue, isDueSoon, diffDays } = getLoanStatusInfo(loan);
                        return (
                          <tr key={loan.id} className="hover:bg-gray-50 transition-colors">
                            <td className="p-4">
@@ -696,9 +623,22 @@ export const AdminDashboard: React.FC = () => {
                            <td className="p-4 text-gray-700">{loan.bookTitle}</td>
                            <td className="p-4 text-gray-500">{loan.pickupDate}</td>
                            <td className="p-4">
-                             <span className={`${isOverdue ? 'text-red-600 font-bold' : isDueSoon ? 'text-yellow-600 font-bold' : 'text-gray-600'}`}>
-                               {loan.returnDate}
-                             </span>
+                             <div className="flex flex-col">
+                               <span className={`flex items-center gap-1.5 ${isOverdue ? 'text-red-600 font-bold' : isDueSoon ? 'text-yellow-600 font-bold' : 'text-gray-600'}`}>
+                                 {(isOverdue || isDueSoon) && <AlertTriangle className="w-3 h-3" />}
+                                 {loan.returnDate}
+                               </span>
+                               <span className="text-[10px] text-gray-400 mt-0.5">
+                                 {isOverdue 
+                                   ? `Vencido hace ${Math.abs(diffDays)} días` 
+                                   : diffDays === 0 
+                                     ? 'Vence hoy' 
+                                     : diffDays === 1 
+                                        ? 'Vence mañana' 
+                                        : `Vence en ${diffDays} días`
+                                 }
+                               </span>
+                             </div>
                            </td>
                            <td className="p-4">
                               <span className={`px-2 py-1 rounded-full text-xs font-bold ${
@@ -709,9 +649,9 @@ export const AdminDashboard: React.FC = () => {
                            </td>
                            <td className="p-4 flex justify-end gap-2">
                              <button
-                               onClick={() => generateReport(loan)}
+                               onClick={() => openReportModal(loan)}
                                className="text-gray-500 hover:text-blue-600 hover:bg-blue-50 p-2 rounded transition-colors"
-                               title="Imprimir Reporte"
+                               title="Ver Reporte"
                              >
                                <FileText className="w-5 h-5" />
                              </button>
@@ -734,8 +674,92 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* REPORT MODAL (APK Safe) */}
+      {viewingReport && (() => {
+         const { isOverdue } = getLoanStatusInfo(viewingReport);
+         const statusText = isOverdue ? "ATRASADO" : "ACTIVO";
+         const statusColor = isOverdue ? "bg-red-600" : "bg-green-600";
+         
+         return (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100] backdrop-blur-sm print:bg-white print:static print:p-0 print:block">
+              <div id="printable-report" className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden">
+                <div className="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center print:hidden">
+                  <h3 className="font-bold text-lg text-gray-800 flex items-center">
+                    <FileText className="w-5 h-5 mr-2 text-blue-600" /> Reporte de Préstamo
+                  </h3>
+                  <button onClick={() => setViewingReport(null)} className="text-gray-400 hover:text-red-600">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+
+                <div className="p-8 font-serif">
+                   <div className="text-center border-b-2 border-blue-600 pb-4 mb-6">
+                     <h1 className="text-2xl font-bold text-blue-700">BiblioTech</h1>
+                     <p className="text-xs uppercase tracking-widest text-gray-500 mt-1">Comprobante Oficial</p>
+                   </div>
+
+                   <div className="flex justify-between text-xs text-gray-400 mb-6">
+                      <span>ID: {viewingReport.id.slice(0, 8)}...</span>
+                      <span>{new Date().toLocaleDateString()}</span>
+                   </div>
+
+                   <div className="space-y-4">
+                      <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                         <p className="text-xs font-bold text-gray-400 uppercase mb-1">Alumno</p>
+                         <p className="font-bold text-lg text-gray-900">{viewingReport.studentName}</p>
+                         <p className="font-mono text-gray-600">{viewingReport.studentMatricula}</p>
+                      </div>
+
+                      <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                         <p className="text-xs font-bold text-gray-400 uppercase mb-1">Libro</p>
+                         <p className="font-bold text-gray-800">{viewingReport.bookTitle}</p>
+                         <p className="text-xs text-gray-500 mt-1">ID: {viewingReport.bookId}</p>
+                      </div>
+
+                      <div className="flex gap-4">
+                        <div className="flex-1">
+                          <p className="text-xs font-bold text-gray-400 uppercase">Recolección</p>
+                          <p className="font-medium">{viewingReport.pickupDate}</p>
+                        </div>
+                        <div className="flex-1 text-right">
+                          <p className="text-xs font-bold text-gray-400 uppercase">Vencimiento</p>
+                          <p className="font-bold text-red-600">{viewingReport.returnDate}</p>
+                        </div>
+                      </div>
+
+                      <div className="text-center mt-6 pt-4 border-t border-dashed border-gray-300">
+                        <span className={`inline-block px-4 py-1 rounded-full text-white text-xs font-bold ${statusColor}`}>
+                          ESTADO: {statusText}
+                        </span>
+                      </div>
+                   </div>
+
+                   <div className="mt-8 text-center text-[10px] text-gray-400">
+                     <p>BiblioTech System 2024</p>
+                   </div>
+                </div>
+
+                <div className="bg-gray-50 p-4 border-t border-gray-100 flex gap-3 print:hidden">
+                   <button 
+                     onClick={handlePrint}
+                     className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center justify-center"
+                   >
+                     <Printer className="w-4 h-4 mr-2" /> Imprimir
+                   </button>
+                   <button 
+                     onClick={() => setViewingReport(null)}
+                     className="flex-1 bg-white border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50"
+                   >
+                     Cerrar
+                   </button>
+                </div>
+              </div>
+            </div>
+         );
+      })()}
+
       {view === 'SCAN' && (
-        <div className="max-w-2xl mx-auto">
+        <div className="max-w-2xl mx-auto no-print">
           <div className="bg-white p-8 rounded-2xl shadow-xl text-center">
             <Scan className="w-16 h-16 mx-auto text-blue-600 mb-4" />
             <h2 className="text-2xl font-bold mb-2">Escanear Solicitud</h2>
