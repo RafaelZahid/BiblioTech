@@ -1,0 +1,7 @@
+{
+  "name": "BiblioTech - Sistema de Biblioteca",
+  "description": "Sistema de gestión de préstamos de libros escolares con roles de alumno y administrador, generación de QR y búsqueda avanzada.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
