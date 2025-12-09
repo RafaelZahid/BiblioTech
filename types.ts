@@ -29,7 +29,7 @@ export interface LoanRequest {
   bookTitle: string;
   pickupDate: string;
   returnDate: string;
-  status: 'PENDING' | 'ACTIVE' | 'RETURNED';
+  status: 'PENDING' | 'ACTIVE' | 'RETURNED' | 'OVERDUE';
 }
 
 export const ADMIN_SECRET_KEY = "BIBLIO-KEY-2024";

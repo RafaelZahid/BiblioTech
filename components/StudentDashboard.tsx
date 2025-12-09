@@ -61,6 +61,7 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
 
     setCreatingLoan(true);
     try {
+      // 1. Create the loan request
       const newLoan: LoanRequest = {
         id: crypto.randomUUID(),
         bookId: selectedBook.id,
@@ -74,9 +75,18 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
       };
 
       await StorageService.saveLoan(newLoan);
+
+      // 2. Update book availability to false
+      const updatedBook = { ...selectedBook, available: false };
+      await StorageService.updateBook(updatedBook);
+
+      // 3. Update local state to reflect change immediately
+      setBooks(prevBooks => prevBooks.map(b => b.id === selectedBook.id ? updatedBook : b));
+      
       setGeneratedLoan(newLoan);
       setSelectedBook(null); // Close modal
     } catch (err) {
+      console.error(err);
       alert("Error al crear la solicitud.");
     } finally {
       setCreatingLoan(false);

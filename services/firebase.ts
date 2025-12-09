@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, Firestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { getFirestore, Firestore, initializeFirestore } from "firebase/firestore";
 
 // Configuración real de Firebase para BiblioTech
 const firebaseConfig = {
@@ -20,8 +20,11 @@ let dbInstance: Firestore | null = null;
 
 try {
   app = initializeApp(firebaseConfig);
-  // Inicializamos Firestore con configuración básica para asegurar compatibilidad
-  dbInstance = getFirestore(app);
+  // Se usa initializeFirestore con experimentalForceLongPolling para solucionar el error
+  // "Backend didn't respond within 10 seconds" común en entornos con restricciones de red o proxies.
+  dbInstance = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+  });
   
   console.log(`Conectado exitosamente al proyecto: ${firebaseConfig.projectId}`);
 } catch (e) {
