@@ -105,16 +105,18 @@
     <script type="module" src="index.tsx"></script>
 
     <script>
-      // Fallback: Si en 8 segundos no carga, mostrar mensaje de ayuda
+      // Fallback: Si en 5 segundos no carga, mostrar mensaje de ayuda
       setTimeout(() => {
         const loader = document.getElementById('root-loader');
         const root = document.getElementById('root');
         if (loader && loader.style.display !== 'none' && (!root || root.children.length === 0)) {
            const text = document.getElementById('loader-text');
-           if(text) text.innerHTML = "La carga está tardando más de lo esperado.<br>Por favor, recarga la página.";
-           text.style.color = "#dc2626";
+           if(text) {
+             text.innerHTML = "La carga está tardando más de lo esperado.<br>Es posible que haya un error de configuración o red.";
+             text.style.color = "#dc2626";
+           }
         }
-      }, 8000);
+      }, 5000);
 
       // Ocultar loader cuando React monte el contenido
       const observer = new MutationObserver((mutations) => {
