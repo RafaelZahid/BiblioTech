@@ -11,10 +11,24 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Initialize DB
-    StorageService.init().then(() => {
-      setIsLoading(false);
-    });
+    const initApp = async () => {
+      // Create a timeout promise that resolves after 3 seconds
+      const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 3000));
+      
+      // Initialize DB, but don't let it block forever
+      try {
+        await Promise.race([
+          StorageService.init(),
+          timeoutPromise
+        ]);
+      } catch (e) {
+        console.error("Initialization error:", e);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    initApp();
   }, []);
 
   const handleLogout = () => {

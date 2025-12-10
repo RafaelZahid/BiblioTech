@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Book, LoanRequest } from '../types';
 import { StorageService } from '../services/storage';
-import { Search, Calendar, CheckCircle, X, Loader2, Filter } from 'lucide-react';
+import { Search, Calendar, CheckCircle, X, Loader2, Filter, Download } from 'lucide-react';
 import QRCode from 'react-qr-code';
 
 interface StudentProps {
@@ -93,6 +93,37 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
     }
   };
 
+  // Función para descargar el QR como imagen
+  const downloadQR = () => {
+    const svg = document.getElementById("qr-code-svg");
+    if (!svg) return;
+    
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      if (ctx) {
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        const pngFile = canvas.toDataURL("image/png");
+        
+        const downloadLink = document.createElement("a");
+        downloadLink.href = pngFile;
+        downloadLink.download = `Prestamo-${generatedLoan?.bookTitle.substring(0, 20)}.png`;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+      }
+    };
+    
+    img.src = "data:image/svg+xml;base64," + btoa(svgData);
+  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <header className="mb-8">
@@ -109,6 +140,7 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
             
             <div className="bg-white p-4 rounded-xl border-2 border-dashed border-gray-300 inline-block mb-6">
               <QRCode 
+                id="qr-code-svg"
                 value={JSON.stringify(generatedLoan)} 
                 size={200}
                 level="M"
@@ -121,12 +153,21 @@ export const StudentDashboard: React.FC<StudentProps> = ({ user }) => {
               <p><strong>Entregar:</strong> {generatedLoan.returnDate}</p>
             </div>
 
-            <button 
-              onClick={() => setGeneratedLoan(null)}
-              className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700"
-            >
-              Cerrar
-            </button>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={downloadQR}
+                className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 flex items-center justify-center"
+              >
+                <Download className="w-5 h-5 mr-2" />
+                Descargar QR
+              </button>
+              <button 
+                onClick={() => setGeneratedLoan(null)}
+                className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-50"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -20,15 +20,26 @@ let dbInstance: Firestore | null = null;
 
 try {
   app = initializeApp(firebaseConfig);
-  // Se usa initializeFirestore con experimentalForceLongPolling para solucionar el error
-  // "Backend didn't respond within 10 seconds" común en entornos con restricciones de red o proxies.
-  dbInstance = initializeFirestore(app, {
-    experimentalForceLongPolling: true,
-  });
   
-  console.log(`Conectado exitosamente al proyecto: ${firebaseConfig.projectId}`);
+  // Usamos getFirestore estándar que es más robusto para la mayoría de conexiones
+  try {
+    dbInstance = getFirestore(app);
+    console.log(`Conectado exitosamente a Firebase: ${firebaseConfig.projectId}`);
+  } catch (e) {
+    console.warn("Fallo getFirestore estándar. Intentando inicialización forzada...", e);
+    // Fallback solo si el estándar falla
+    try {
+      dbInstance = initializeFirestore(app, {
+        experimentalForceLongPolling: true,
+      });
+    } catch (e2) {
+       console.error("No se pudo conectar a Firestore. La app funcionará en modo OFFLINE.", e2);
+    }
+  }
+  
 } catch (e) {
-  console.error("Error al inicializar Firebase. Puede ser un problema de red.", e);
+  console.error("Error crítico en configuración de Firebase. Se usará modo Offline.", e);
 }
 
+// Exportamos la instancia (puede ser null, lo que activará MockStorage en storage.ts)
 export const db = dbInstance;

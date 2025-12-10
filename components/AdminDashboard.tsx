@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Book, LoanRequest } from '../types';
 import { StorageService } from '../services/storage';
-import { Plus, Scan, BookOpen, Save, X, Check, Info, Pencil, Search, Filter, Loader2, ClipboardList, Clock, AlertTriangle, CheckCircle, FileText, Bell, Calendar, Printer, ChevronLeft, ChevronRight, XCircle, Camera, CameraOff } from 'lucide-react';
+import { Plus, Scan, BookOpen, Save, X, Check, Info, Pencil, Search, Filter, Loader2, ClipboardList, Clock, AlertTriangle, CheckCircle, FileText, Bell, Calendar, Printer, ChevronLeft, ChevronRight, XCircle, Camera, CameraOff, Upload } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
   const [view, setView] = useState<'BOOKS' | 'SCAN' | 'LOANS'>('BOOKS');
@@ -41,6 +41,7 @@ export const AdminDashboard: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load data on mount
   useEffect(() => {
@@ -170,6 +171,50 @@ export const AdminDashboard: React.FC = () => {
       stream.getTracks().forEach(track => track.stop());
       videoRef.current.srcObject = null;
     }
+  };
+
+  // Manejo de subida de imagen QR
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          
+          const jsQR = (window as any).jsQR;
+          if (jsQR) {
+            const code = jsQR(imageData.data, imageData.width, imageData.height);
+            if (code) {
+               try {
+                const data = JSON.parse(code.data);
+                if (data.id && data.studentMatricula && data.bookTitle) {
+                  setScannedData(data);
+                } else {
+                   alert("El QR escaneado no es válido para este sistema.");
+                }
+              } catch (err) {
+                alert("Error leyendo el contenido del QR.");
+              }
+            } else {
+              alert("No se detectó ningún código QR en la imagen.");
+            }
+          }
+        }
+      };
+      if (event.target && event.target.result) {
+         img.src = event.target.result as string;
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const tick = () => {
@@ -983,20 +1028,45 @@ export const AdminDashboard: React.FC = () => {
             <Scan className="w-16 h-16 mx-auto text-blue-600 mb-4" />
             <h2 className="text-2xl font-bold mb-2">Escanear Solicitud</h2>
             <p className="text-gray-500 mb-6">
-              Escanea el código QR del alumno para ver los detalles del préstamo.
+              Escanea el código QR del alumno o sube una imagen del mismo para validar el préstamo.
             </p>
             
             {/* Camera Area */}
             <div className="relative mb-6 bg-gray-900 rounded-2xl overflow-hidden shadow-inner aspect-[4/3] flex items-center justify-center">
                {!isCameraActive && !scannedData && (
-                 <div className="text-center p-6">
-                    <p className="text-gray-400 mb-4">La cámara está desactivada</p>
+                 <div className="text-center p-6 flex flex-col gap-3">
+                    <p className="text-gray-400 mb-2">La cámara está desactivada</p>
                     <button 
                       onClick={startCamera}
-                      className="bg-blue-600 text-white px-6 py-3 rounded-full font-bold hover:bg-blue-700 flex items-center mx-auto"
+                      className="bg-blue-600 text-white px-6 py-3 rounded-full font-bold hover:bg-blue-700 flex items-center justify-center w-full"
                     >
                       <Camera className="w-5 h-5 mr-2" /> Activar Cámara
                     </button>
+                    
+                    <div className="relative">
+                      <div className="absolute inset-0 flex items-center">
+                        <span className="w-full border-t border-gray-700" />
+                      </div>
+                      <div className="relative flex justify-center text-xs uppercase">
+                        <span className="bg-gray-900 px-2 text-gray-500">O también</span>
+                      </div>
+                    </div>
+
+                    <div className="relative">
+                      <input 
+                        ref={fileInputRef}
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={handleFileUpload}
+                      />
+                      <button 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="bg-gray-700 text-white px-6 py-3 rounded-full font-bold hover:bg-gray-600 flex items-center justify-center w-full transition-colors"
+                      >
+                        <Upload className="w-5 h-5 mr-2" /> Subir Imagen QR
+                      </button>
+                    </div>
                  </div>
                )}
                
