@@ -10,9 +10,7 @@ import {
   doc, 
   query, 
   where,
-  setDoc,
-  persistentLocalCache,
-  memoryLocalCache
+  setDoc
 } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
 
@@ -29,11 +27,9 @@ const firebaseConfig = {
 // Inicializar Firebase
 const app = initializeApp(firebaseConfig);
 
-// Usar initializeFirestore para configuración explícita que mejora la estabilidad de conexión
-const db = initializeFirestore(app, {
-  // En algunos entornos webcontainers o corporativos, el long polling es más estable que los websockets
-  localCache: memoryLocalCache() 
-});
+// Inicializamos Firestore de manera estándar para máxima compatibilidad
+// Si hay problemas de "backend unreachable", suele ser la red, no la config de caché en web
+const db = getFirestore(app);
 
 const auth = getAuth(app);
 

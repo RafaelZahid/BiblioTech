@@ -11,8 +11,41 @@
         font-family: 'Inter', sans-serif;
         background-color: #f3f4f6;
       }
+      #root-loader {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        color: #6b7280;
+        font-family: sans-serif;
+      }
+      #global-error {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: white;
+        z-index: 9999;
+        padding: 2rem;
+        overflow: auto;
+      }
     </style>
-  <script type="importmap">
+    
+    <!-- Global Error Handler: Shows startup errors on screen instead of white screen -->
+    <script>
+      window.onerror = function(msg, url, line, col, error) {
+        var errorBox = document.getElementById('global-error');
+        var errorMsg = document.getElementById('global-error-msg');
+        if (errorBox && errorMsg) {
+          errorBox.style.display = 'block';
+          errorMsg.textContent = "Error crítico de inicio:\n" + msg + "\n\nEn: " + url + ":" + line;
+          document.getElementById('root-loader').style.display = 'none';
+        }
+        console.error("Global Error Caught:", error);
+      };
+    </script>
+
+    <script type="importmap">
 {
   "imports": {
     "react": "https://esm.sh/react@18.2.0",
@@ -32,8 +65,32 @@
   }
 }
 </script>
-</head>
+  </head>
   <body>
     <div id="root"></div>
+    
+    <div id="root-loader">
+      <h2 style="font-size: 1.5rem; font-weight: bold; margin-bottom: 0.5rem;">BiblioTech</h2>
+      <p>Iniciando sistema...</p>
+    </div>
+
+    <div id="global-error">
+      <div style="max-width: 600px; margin: 0 auto; border: 1px solid #fecaca; background: #fef2f2; padding: 20px; border-radius: 8px;">
+        <h3 style="color: #991b1b; font-weight: bold; margin-bottom: 10px;">No se pudo iniciar la aplicación</h3>
+        <pre id="global-error-msg" style="white-space: pre-wrap; color: #7f1d1d; font-size: 0.9em; font-family: monospace;"></pre>
+        <button onclick="window.location.reload()" style="margin-top: 15px; background: #dc2626; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Recargar página</button>
+      </div>
+    </div>
+
+    <!-- Hide loader when React mounts -->
+    <script>
+      const observer = new MutationObserver((mutations) => {
+        if (document.getElementById('root').children.length > 0) {
+          document.getElementById('root-loader').style.display = 'none';
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.getElementById('root'), { childList: true });
+    </script>
   </body>
 </html>
