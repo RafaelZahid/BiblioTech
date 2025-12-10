@@ -1,321 +1,220 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Book, LoanRequest } from '../types';
 import { StorageService } from '../services/storage';
-import { Plus, Scan, BookOpen, Save, X, Check, Info, Pencil, Search, Filter, Loader2, ClipboardList, Clock, AlertTriangle, CheckCircle, FileText, Bell, Calendar, Printer, ChevronLeft, ChevronRight, XCircle, Camera, CameraOff, Upload } from 'lucide-react';
+import { Plus, Scan, BookOpen, Save, X, Check, Pencil, ChevronLeft, ChevronRight, History, Calendar, Filter, Search, AlertTriangle, FileText, RefreshCcw, Camera, Loader2 } from 'lucide-react';
+import { jsPDF } from "jspdf";
+import jsQR from 'jsqr';
 
 export const AdminDashboard: React.FC = () => {
-  const [view, setView] = useState<'BOOKS' | 'SCAN' | 'LOANS'>('BOOKS');
+  const [view, setView] = useState<'BOOKS' | 'SCAN' | 'HISTORY'>('BOOKS');
   const [books, setBooks] = useState<Book[]>([]);
   const [loans, setLoans] = useState<LoanRequest[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
   
-  // Pagination State
+  // Pagination State (Books)
+  const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
-  const [bookPage, setBookPage] = useState(1);
-  const [loanPage, setLoanPage] = useState(1);
 
-  // Notification State
-  const [showNotification, setShowNotification] = useState(true);
-  
-  // Filter State (Books)
-  const [authorFilter, setAuthorFilter] = useState('');
-  const [availabilityFilter, setAvailabilityFilter] = useState<'all' | 'available' | 'unavailable'>('all');
-  
-  // Form State (Add / Edit)
+  // Add/Edit Book Form State
   const [isAdding, setIsAdding] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [newBook, setNewBook] = useState<Partial<Book>>({
     title: '', author: '', description: '', coverUrl: ''
   });
+  const [urlError, setUrlError] = useState('');
 
-  // Book Detail Modal State
-  const [selectedBookDetail, setSelectedBookDetail] = useState<Book | null>(null);
-
-  // Report Modal State (Replaces window.open for APK compatibility)
-  const [viewingReport, setViewingReport] = useState<LoanRequest | null>(null);
-
-  // Scanner State (Real Implementation)
+  // Scanner State
   const [scannedData, setScannedData] = useState<LoanRequest | null>(null);
-  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [scanInput, setScanInput] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const requestRef = useRef<number>(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [cameraError, setCameraError] = useState('');
 
-  // Load data on mount
-  useEffect(() => {
-    loadData();
-  }, []);
+  // History Filters State
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyStatus, setHistoryStatus] = useState<'ALL' | 'ACTIVE' | 'RETURNED' | 'PENDING' | 'OVERDUE'>('ALL');
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
 
-  // Reset pagination when filters change
+  // Load loans on mount or when view changes
   useEffect(() => {
-    setBookPage(1);
-  }, [authorFilter, availabilityFilter]);
-
-  // Cleanup camera on unmount or view change
-  useEffect(() => {
-    return () => {
-      stopCamera();
+    const fetchData = async () => {
+      setLoading(true);
+      if (view === 'BOOKS') {
+        const data = await StorageService.getBooks();
+        setBooks(data);
+      } else {
+        const data = await StorageService.getLoans();
+        setLoans(data);
+      }
+      setLoading(false);
     };
+    fetchData();
   }, [view]);
 
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [booksData, loansData] = await Promise.all([
-        StorageService.getBooks(),
-        StorageService.getLoans()
-      ]);
-      setBooks(booksData);
-      setLoans(loansData);
-    } catch (e) {
-      console.error(e);
-      alert("Error cargando datos");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Camera Logic
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let animationId: number;
 
-  // Helper to toggle book availability
-  const updateBookAvailability = async (bookId: string, available: boolean) => {
-    const book = books.find(b => b.id === bookId);
-    if (book) {
-      const updatedBook = { ...book, available };
+    const startCamera = async () => {
+      if (view !== 'SCAN' || scannedData) return;
+
       try {
-        await StorageService.updateBook(updatedBook);
-        setBooks(prevBooks => prevBooks.map(b => b.id === bookId ? updatedBook : b));
-      } catch (e) {
-        console.error("Failed to update book availability", e);
-      }
-    }
-  };
-
-  // Filter Logic Books
-  const filteredBooks = books.filter(book => {
-    const matchesAuthor = book.author.toLowerCase().includes(authorFilter.toLowerCase());
-    const matchesAvailability = 
-      availabilityFilter === 'all' ? true :
-      availabilityFilter === 'available' ? book.available :
-      !book.available;
-    
-    return matchesAuthor && matchesAvailability;
-  });
-
-  // Pagination Logic Books
-  const totalBookPages = Math.ceil(filteredBooks.length / ITEMS_PER_PAGE);
-  const paginatedBooks = filteredBooks.slice(
-    (bookPage - 1) * ITEMS_PER_PAGE,
-    bookPage * ITEMS_PER_PAGE
-  );
-
-  // Loan Logic
-  const getLoanStatusInfo = (loan: LoanRequest) => {
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    // Parse 'YYYY-MM-DD' correctly to local midnight to avoid timezone shifts
-    const [year, month, day] = loan.returnDate.split('-').map(Number);
-    const returnDate = new Date(year, month - 1, day);
-    
-    const diffTime = returnDate.getTime() - today.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    // Overdue if status is explicitly OVERDUE OR if it is ACTIVE and past date
-    const isOverdue = loan.status === 'OVERDUE' || (loan.status === 'ACTIVE' && diffDays < 0);
-    
-    // Modified to 3 days as requested
-    const isDueSoon = loan.status === 'ACTIVE' && !isOverdue && diffDays >= 0 && diffDays <= 3;
-
-    return { isOverdue, isDueSoon, diffDays };
-  };
-
-  // Active loans now include both ACTIVE and OVERDUE status (anything not returned/pending)
-  const activeLoans = loans.filter(l => l.status === 'ACTIVE' || l.status === 'OVERDUE');
-  const pendingLoans = loans.filter(l => l.status === 'PENDING');
-  const overdueLoans = loans.filter(l => getLoanStatusInfo(l).isOverdue);
-  const dueSoonLoans = loans.filter(l => getLoanStatusInfo(l).isDueSoon);
-
-  // Pagination Logic Loans
-  const totalLoanPages = Math.ceil(activeLoans.length / ITEMS_PER_PAGE);
-  const paginatedLoans = activeLoans.slice(
-    (loanPage - 1) * ITEMS_PER_PAGE,
-    loanPage * ITEMS_PER_PAGE
-  );
-
-  // CAMERA & QR LOGIC
-  const startCamera = async () => {
-    setScannedData(null);
-    setIsCameraActive(true);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.setAttribute("playsinline", "true"); // required to tell iOS safari we don't want fullscreen
-        videoRef.current.play();
-        requestRef.current = requestAnimationFrame(tick);
-      }
-    } catch (err) {
-      console.error(err);
-      alert("No se pudo acceder a la cámara. Por favor, concede permisos.");
-      setIsCameraActive(false);
-    }
-  };
-
-  const stopCamera = () => {
-    if (requestRef.current) {
-      cancelAnimationFrame(requestRef.current);
-    }
-    setIsCameraActive(false);
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
-      videoRef.current.srcObject = null;
-    }
-  };
-
-  // Manejo de subida de imagen QR
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          
-          const jsQR = (window as any).jsQR;
-          if (jsQR) {
-            const code = jsQR(imageData.data, imageData.width, imageData.height);
-            if (code) {
-               try {
-                const data = JSON.parse(code.data);
-                if (data.id && data.studentMatricula && data.bookTitle) {
-                  setScannedData(data);
-                } else {
-                   alert("El QR escaneado no es válido para este sistema.");
-                }
-              } catch (err) {
-                alert("Error leyendo el contenido del QR.");
-              }
-            } else {
-              alert("No se detectó ningún código QR en la imagen.");
-            }
-          }
+        setCameraError('');
+        const constraints = { video: { facingMode: 'environment' } };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.setAttribute("playsinline", "true"); // iOS fix
+          await videoRef.current.play();
+          requestAnimationFrame(tick);
         }
-      };
-      if (event.target && event.target.result) {
-         img.src = event.target.result as string;
+      } catch (err) {
+        console.error("Camera access error:", err);
+        setCameraError('No se pudo acceder a la cámara. Verifique los permisos o use la entrada manual.');
       }
     };
-    reader.readAsDataURL(file);
-  };
 
-  const tick = () => {
-    if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
-      if (canvasRef.current) {
-        const canvas = canvasRef.current;
+    const tick = () => {
+      if (!videoRef.current || !canvasRef.current) return;
+      
+      if (videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
         const video = videoRef.current;
+        const canvas = canvasRef.current;
         
         canvas.height = video.videoHeight;
         canvas.width = video.videoWidth;
-        const ctx = canvas.getContext("2d");
         
+        const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           
-          // Using jsQR from the global scope (added in index.html)
-          const jsQR = (window as any).jsQR;
-          if (jsQR) {
-            const code = jsQR(imageData.data, imageData.width, imageData.height, {
-              inversionAttempts: "dontInvert",
-            });
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "dontInvert",
+          });
 
-            if (code) {
-              try {
-                const data = JSON.parse(code.data);
-                // Validate it looks like a loan request
-                if (data.id && data.studentMatricula && data.bookTitle) {
-                  stopCamera();
-                  setScannedData(data);
-                  return; // Stop loop
+          if (code && code.data) {
+             try {
+                const parsed = JSON.parse(code.data);
+                if (parsed.bookId) { // Check for bookId as minimal requirement
+                   // For scanned objects from offline/QR generation that might not have a DB ID yet if logic was different, 
+                   // but current logic saves to DB then generates QR with ID.
+                   setScannedData(parsed);
+                   return; // Stop scanning loop
                 }
-              } catch (e) {
-                // Not a valid JSON or not our QR
-                console.log("QR detectado pero formato invalido");
-              }
-            }
+             } catch (e) {
+                // Ignore non-json or invalid data
+             }
           }
         }
       }
+      
+      if (!scannedData && view === 'SCAN') {
+        animationId = requestAnimationFrame(tick);
+      }
+    };
+
+    if (view === 'SCAN' && !scannedData) {
+      startCamera();
     }
-    requestRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      if (animationId) cancelAnimationFrame(animationId);
+    };
+  }, [view, scannedData]);
+
+  // Pagination Logic
+  const totalPages = Math.ceil(books.length / ITEMS_PER_PAGE);
+  const paginatedBooks = books.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
+  const goToNextPage = () => {
+    setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+  };
+
+  const goToPrevPage = () => {
+    setCurrentPage((prev) => Math.max(prev - 1, 1));
   };
 
   const handleSaveBook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBook.title || !newBook.author) return;
+    setUrlError(''); // Reset error
+    setActionLoading(true);
 
-    setIsSaving(true);
+    if (!newBook.title || !newBook.author) {
+       setActionLoading(false);
+       return;
+    }
+
+    // Validate URL
+    if (newBook.coverUrl && !newBook.coverUrl.startsWith('data:')) {
+      try {
+        new URL(newBook.coverUrl);
+      } catch (error) {
+        setUrlError('La URL de la imagen no es válida. Ingrese una URL completa (http://...) o suba una imagen.');
+        setActionLoading(false);
+        return;
+      }
+    }
+
     try {
-      if (editingId) {
-        // Logic for Editing
-        const originalBook = books.find(b => b.id === editingId);
-        const updatedBook: Book = {
-          id: editingId,
-          title: newBook.title!,
-          author: newBook.author!,
-          description: newBook.description || '',
-          coverUrl: newBook.coverUrl || '',
-          available: originalBook ? originalBook.available : true
-        };
-
+      if (newBook.id) {
+        // EDIT MODE
+        const updatedBook = { ...newBook } as Book;
         await StorageService.updateBook(updatedBook);
-        setBooks(books.map(b => b.id === editingId ? updatedBook : b));
+        setBooks(books.map(b => b.id === updatedBook.id ? updatedBook : b));
       } else {
-        // Logic for Adding
+        // CREATE MODE
         const book: Book = {
-          id: Date.now().toString(),
+          id: '', // Firestore generates ID
           title: newBook.title!,
           author: newBook.author!,
           description: newBook.description || '',
           coverUrl: newBook.coverUrl || `https://picsum.photos/200/300?random=${Date.now()}`,
           available: true
         };
-
         await StorageService.saveBook(book);
-        setBooks([...books, book]);
+        const allBooks = await StorageService.getBooks(); // Refresh to get IDs
+        setBooks(allBooks);
       }
-      
-      // Reset Form
-      setIsAdding(false);
-      setEditingId(null);
-      setNewBook({ title: '', author: '', description: '', coverUrl: '' });
-    } catch (err) {
-      alert("Error al guardar en base de datos.");
+      resetForm();
+    } catch (error) {
+      console.error("Error saving book:", error);
+      alert("Error al guardar el libro");
     } finally {
-      setIsSaving(false);
+      setActionLoading(false);
     }
   };
 
-  const startEditing = (book: Book) => {
-    setNewBook(book);
-    setEditingId(book.id);
+  const handleEditClick = (book: Book) => {
+    setNewBook({ ...book });
+    setUrlError('');
     setIsAdding(true);
-    setSelectedBookDetail(null); // Close modal if open
   };
 
-  const cancelForm = () => {
+  const handleToggleAvailability = async (book: Book) => {
+    try {
+      const updatedBook = { ...book, available: !book.available };
+      await StorageService.updateBook(updatedBook);
+      setBooks(books.map(b => b.id === updatedBook.id ? updatedBook : b));
+    } catch (e) {
+      console.error(e);
+      alert("Error al actualizar disponibilidad");
+    }
+  };
+
+  const resetForm = () => {
     setIsAdding(false);
-    setEditingId(null);
     setNewBook({ title: '', author: '', description: '', coverUrl: '' });
+    setUrlError('');
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -324,210 +223,205 @@ export const AdminDashboard: React.FC = () => {
       const reader = new FileReader();
       reader.onloadend = () => {
         setNewBook({ ...newBook, coverUrl: reader.result as string });
+        setUrlError(''); // Clear error if valid file uploaded
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const simulateScan = () => {
+    try {
+      const data = JSON.parse(scanInput);
+      setScannedData(data);
+    } catch (e) {
+      alert("Error al leer el código. Asegúrate de copiar el JSON completo generado por el alumno.");
     }
   };
 
   const confirmLoan = async () => {
     if (scannedData) {
       try {
+        setActionLoading(true);
         await StorageService.updateLoanStatus(scannedData.id, 'ACTIVE');
         alert(`Préstamo confirmado para ${scannedData.studentName}.`);
         setScannedData(null);
-        loadData(); // Reload stats
-      } catch (e) {
-        alert("Error actualizando el préstamo.");
+        setScanInput('');
+        const freshLoans = await StorageService.getLoans();
+        setLoans(freshLoans); // Refresh loans
+      } catch (error) {
+        alert("Error al confirmar préstamo");
+      } finally {
+        setActionLoading(false);
       }
     }
   };
 
-  const markAsReturned = async (loanId: string) => {
-    if(confirm("¿Confirmar devolución del libro?")) {
+  // Helper for History Filter Logic
+  const getFilteredLoans = () => {
+    return loans.filter(loan => {
+      // 1. Text Search
+      const matchesSearch = 
+        loan.studentName.toLowerCase().includes(historySearch.toLowerCase()) ||
+        loan.studentMatricula.includes(historySearch) ||
+        loan.bookTitle.toLowerCase().includes(historySearch.toLowerCase());
+      
+      if (!matchesSearch) return false;
+
+      // 2. Status Filter
+      const isLate = new Date(loan.returnDate) < new Date();
+      const isCalculatedOverdue = isLate && loan.status === 'ACTIVE';
+      
+      if (historyStatus === 'OVERDUE') {
+        if (loan.status !== 'OVERDUE' && !isCalculatedOverdue) return false;
+      }
+      else if (historyStatus === 'ACTIVE') {
+        if (loan.status !== 'ACTIVE' || isCalculatedOverdue) return false;
+      }
+      else if (historyStatus === 'RETURNED' && loan.status !== 'RETURNED') return false;
+      else if (historyStatus === 'PENDING' && loan.status !== 'PENDING') return false;
+
+      // 3. Date Filter
+      if (dateStart && new Date(loan.pickupDate) < new Date(dateStart)) return false;
+      if (dateEnd && new Date(loan.pickupDate) > new Date(dateEnd)) return false;
+
+      return true;
+    });
+  };
+
+  const handleReturnBook = async (loanId: string) => {
+    if (window.confirm('¿Confirmar devolución del libro?')) {
       try {
         await StorageService.updateLoanStatus(loanId, 'RETURNED');
-        // Update local state immediately for better UX
-        setLoans(loans.map(l => l.id === loanId ? {...l, status: 'RETURNED'} : l));
+        setLoans(loans.map(l => l.id === loanId ? { ...l, status: 'RETURNED' } : l));
         
-        // Find the loan to get the book ID and make it available
-        const loan = loans.find(l => l.id === loanId);
-        if (loan) {
-          await updateBookAvailability(loan.bookId, true);
-        }
-      } catch(e) {
-        alert("Error al actualizar estado");
+        // Optionally make book available again logic here if requirements changed, 
+        // currently user does it manually via book list as per previous requests.
+      } catch (e) {
+        alert("Error al devolver libro");
       }
     }
   };
 
-  const markAsOverdue = async (loanId: string) => {
-    if(confirm("¿Marcar este préstamo como Vencido manualmente?")) {
+  const handleMarkOverdue = async (loanId: string) => {
+    if (window.confirm('¿Marcar este préstamo como vencido?')) {
       try {
         await StorageService.updateLoanStatus(loanId, 'OVERDUE');
-        // Update local state immediately for better UX
-        setLoans(loans.map(l => l.id === loanId ? {...l, status: 'OVERDUE'} : l));
-
-        // Find the loan to get the book ID and make it available (as requested)
-        const loan = loans.find(l => l.id === loanId);
-        if (loan) {
-          await updateBookAvailability(loan.bookId, true);
-        }
-      } catch(e) {
-        alert("Error al actualizar estado");
+        setLoans(loans.map(l => l.id === loanId ? { ...l, status: 'OVERDUE' } : l));
+      } catch (e) {
+         alert("Error al actualizar estado");
       }
     }
   };
 
-  // Safe Report Generation for APKs (No window.open)
-  const openReportModal = (loan: LoanRequest) => {
-    setViewingReport(loan);
+  const generateLoanPDF = (loan: LoanRequest) => {
+    const doc = new jsPDF();
+    doc.setFillColor(37, 99, 235);
+    doc.rect(0, 0, 210, 25, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(20);
+    doc.setFont("helvetica", "bold");
+    doc.text("BiblioTech - Reporte de Préstamo", 15, 17);
+    doc.setTextColor(33, 33, 33);
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "normal");
+    
+    let y = 45;
+    const lineHeight = 10;
+    const leftCol = 20;
+    const rightCol = 70;
+
+    const addSection = (title: string) => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(37, 99, 235);
+      doc.text(title, leftCol, y);
+      doc.line(leftCol, y + 2, 190, y + 2);
+      y += 15;
+    };
+
+    const addField = (label: string, value: string) => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(0, 0, 0);
+      doc.text(`${label}:`, leftCol, y);
+      doc.setFont("helvetica", "normal");
+      doc.text(value, rightCol, y);
+      y += lineHeight;
+    };
+
+    addSection("Información del Préstamo");
+    addField("ID Transacción", loan.id);
+    addField("Estado Actual", loan.status);
+    y += 5;
+    addSection("Datos del Alumno");
+    addField("Nombre", loan.studentName);
+    addField("Matrícula", loan.studentMatricula);
+    y += 5;
+    addSection("Datos del Libro");
+    addField("Título", loan.bookTitle);
+    addField("ID Libro", loan.bookId);
+    y += 5;
+    addSection("Fechas");
+    addField("Fecha de Salida", loan.pickupDate);
+    addField("Fecha de Devolución", loan.returnDate);
+    doc.setFontSize(10);
+    doc.setTextColor(150);
+    const dateStr = new Date().toLocaleString();
+    doc.text(`Documento generado electrónicamente el ${dateStr}`, leftCol, 280);
+    doc.save(`prestamo_${loan.studentMatricula}_${loan.id}.pdf`);
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const filteredLoans = getFilteredLoans();
+
+  if (loading && view !== 'SCAN') {
+    return <div className="p-8 flex justify-center"><Loader2 className="animate-spin text-blue-600 w-8 h-8"/></div>;
+  }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto relative print:p-0 print:m-0 print:w-full">
-      
-      {/* CSS para Impresión y Animación */}
-      <style>{`
-        @keyframes scan {
-          0% { top: 0%; opacity: 0; }
-          15% { opacity: 1; }
-          85% { opacity: 1; }
-          100% { top: 100%; opacity: 0; }
-        }
-        .animate-scan {
-          animation: scan 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-        }
-
-        @media print {
-          body * {
-            visibility: hidden;
-          }
-          #printable-report, #printable-report * {
-            visibility: visible;
-          }
-          #printable-report {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            margin: 0;
-            padding: 20px;
-            background: white;
-            border: none;
-            box-shadow: none;
-          }
-          .no-print {
-            display: none !important;
-          }
-        }
-      `}</style>
-
-      {/* Toast Notification for Due Soon Loans */}
-      {showNotification && dueSoonLoans.length > 0 && (
-        <div className="fixed bottom-4 right-4 bg-yellow-50 border-l-4 border-yellow-400 p-4 shadow-2xl rounded-r max-w-sm z-50 animate-slide-up flex items-start no-print">
-          <Bell className="w-5 h-5 text-yellow-600 mr-3 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <h4 className="font-bold text-yellow-800 text-sm">Próximos Vencimientos</h4>
-            <p className="text-sm text-yellow-700 mt-1">
-              Hay {dueSoonLoans.length} préstamos que vencen en los próximos 3 días.
-            </p>
-            <button 
-              onClick={() => setView('LOANS')}
-              className="text-xs font-bold text-yellow-800 underline mt-2 hover:text-black"
-            >
-              Ver detalles
-            </button>
-          </div>
-          <button 
-            onClick={() => setShowNotification(false)}
-            className="text-yellow-500 hover:text-yellow-800 ml-2"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
-      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 no-print">
+    <div className="p-6 max-w-6xl mx-auto">
+      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
         <h1 className="text-3xl font-bold text-gray-800">Panel de Administración</h1>
-        <div className="flex bg-white rounded-lg p-1 shadow-sm border border-gray-200">
+        <div className="flex space-x-2 bg-white p-1 rounded-lg shadow-sm border">
           <button 
             onClick={() => setView('BOOKS')}
-            className={`px-4 py-2 rounded-md font-medium flex items-center transition-all ${view === 'BOOKS' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
+            className={`px-4 py-2 rounded-lg font-medium flex items-center transition-all ${view === 'BOOKS' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
           >
             <BookOpen className="w-4 h-4 mr-2" /> Libros
           </button>
           <button 
-            onClick={() => setView('LOANS')}
-            className={`px-4 py-2 rounded-md font-medium flex items-center transition-all ${view === 'LOANS' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            <ClipboardList className="w-4 h-4 mr-2" /> Préstamos
-            <div className="flex space-x-1 ml-2">
-              {overdueLoans.length > 0 && <span className="bg-red-500 text-white text-[10px] px-1.5 rounded-full">{overdueLoans.length}</span>}
-              {dueSoonLoans.length > 0 && <span className="bg-yellow-500 text-white text-[10px] px-1.5 rounded-full">{dueSoonLoans.length}</span>}
-            </div>
-          </button>
-          <button 
             onClick={() => setView('SCAN')}
-            className={`px-4 py-2 rounded-md font-medium flex items-center transition-all ${view === 'SCAN' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
+            className={`px-4 py-2 rounded-lg font-medium flex items-center transition-all ${view === 'SCAN' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
           >
             <Scan className="w-4 h-4 mr-2" /> Escáner
+          </button>
+          <button 
+            onClick={() => setView('HISTORY')}
+            className={`px-4 py-2 rounded-lg font-medium flex items-center transition-all ${view === 'HISTORY' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            <History className="w-4 h-4 mr-2" /> Historial
           </button>
         </div>
       </div>
 
       {view === 'BOOKS' && (
-        <div className="no-print">
+        <div>
           {!isAdding ? (
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-              <button 
-                onClick={() => {
-                  setEditingId(null);
-                  setNewBook({ title: '', author: '', description: '', coverUrl: '' });
-                  setIsAdding(true);
-                }}
-                className="bg-green-600 text-white px-6 py-2.5 rounded-lg font-bold flex items-center hover:bg-green-700 transition-colors shadow-sm"
-              >
-                <Plus className="w-5 h-5 mr-2" /> Agregar Libro
-              </button>
-
-              {/* Filters */}
-              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto bg-white p-2 rounded-lg shadow-sm border border-gray-100">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                  <input 
-                    type="text" 
-                    placeholder="Filtrar por autor..." 
-                    className="pl-9 pr-3 py-2 border rounded-md text-sm outline-none focus:ring-2 focus:ring-blue-100 w-full sm:w-48"
-                    value={authorFilter}
-                    onChange={(e) => setAuthorFilter(e.target.value)}
-                  />
-                </div>
-                
-                <div className="relative">
-                  <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                  <select 
-                    className="pl-9 pr-3 py-2 border rounded-md text-sm outline-none focus:ring-2 focus:ring-blue-100 w-full sm:w-40 bg-white appearance-none cursor-pointer"
-                    value={availabilityFilter}
-                    onChange={(e) => setAvailabilityFilter(e.target.value as any)}
-                  >
-                    <option value="all">Todos</option>
-                    <option value="available">Disponibles</option>
-                    <option value="unavailable">Agotados</option>
-                  </select>
-                </div>
-              </div>
-            </div>
+            <button 
+              onClick={() => {
+                setNewBook({ title: '', author: '', description: '', coverUrl: '' });
+                setIsAdding(true);
+              }}
+              className="mb-6 bg-green-600 text-white px-6 py-3 rounded-lg font-bold flex items-center hover:bg-green-700 transition-colors"
+            >
+              <Plus className="w-5 h-5 mr-2" /> Agregar Nuevo Libro
+            </button>
           ) : (
             <div className="bg-white p-6 rounded-xl shadow-lg mb-8 border border-blue-100 animate-fade-in">
               <div className="flex justify-between mb-4">
                 <h2 className="text-xl font-bold text-gray-800">
-                  {editingId ? 'Editar Libro' : 'Registrar Libro'}
+                  {newBook.id ? 'Editar Libro' : 'Registrar Libro'}
                 </h2>
-                <button onClick={cancelForm} className="text-gray-400 hover:text-red-500"><X /></button>
+                <button onClick={resetForm} className="text-gray-400 hover:text-red-500"><X /></button>
               </div>
               <form onSubmit={handleSaveBook} className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-4">
@@ -560,636 +454,407 @@ export const AdminDashboard: React.FC = () => {
                       onChange={e => setNewBook({...newBook, description: e.target.value})}
                     />
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <input 
+                      type="checkbox"
+                      id="available"
+                      checked={newBook.available ?? true}
+                      onChange={e => setNewBook({...newBook, available: e.target.checked})}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <label htmlFor="available" className="text-sm font-medium text-gray-700">
+                      Disponible para préstamo
+                    </label>
+                  </div>
                 </div>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Portada del Libro</label>
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg h-48 flex items-center justify-center bg-gray-50 overflow-hidden relative">
+                    <input 
+                      type="text" 
+                      placeholder="https://ejemplo.com/portada.jpg"
+                      className={`w-full border rounded-lg p-2 mb-2 text-sm ${urlError ? 'border-red-500 ring-1 ring-red-500' : 'border-gray-300'}`}
+                      value={newBook.coverUrl?.startsWith('data:') ? '' : newBook.coverUrl || ''}
+                      onChange={(e) => {
+                        setNewBook({ ...newBook, coverUrl: e.target.value });
+                        setUrlError('');
+                      }}
+                    />
+                    {newBook.coverUrl?.startsWith('data:') && (
+                       <p className="text-xs text-green-600 mb-2 font-medium flex items-center">
+                         <Check className="w-3 h-3 mr-1" /> Imagen cargada desde archivo
+                       </p>
+                    )}
+                    {urlError && <p className="text-red-500 text-xs mb-2 font-medium">{urlError}</p>}
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg h-48 flex items-center justify-center bg-gray-50 overflow-hidden relative transition-colors hover:bg-gray-100">
                       {newBook.coverUrl ? (
                         <img src={newBook.coverUrl} alt="Preview" className="h-full object-contain" />
                       ) : (
-                        <span className="text-gray-400 text-sm p-4 text-center">Seleccionar archivo de imagen</span>
+                        <div className="text-center p-4">
+                          <p className="text-gray-400 text-sm">Arrastra una imagen o haz clic para subir</p>
+                        </div>
                       )}
                       <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleImageUpload} />
                     </div>
                   </div>
-                  <button type="submit" disabled={isSaving} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold flex items-center justify-center hover:bg-blue-700 disabled:opacity-50">
-                    {isSaving ? <Loader2 className="animate-spin w-5 h-5 mr-2"/> : <Save className="w-5 h-5 mr-2" />}
-                    {editingId ? 'Actualizar Libro' : 'Guardar Libro'}
+                  <button 
+                     type="submit" 
+                     disabled={actionLoading}
+                     className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold flex items-center justify-center hover:bg-blue-700 disabled:opacity-70"
+                  >
+                    {actionLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Save className="w-5 h-5 mr-2" /> {newBook.id ? 'Actualizar Libro' : 'Guardar Libro'}</>}
                   </button>
                 </div>
               </form>
             </div>
           )}
 
-          {loading ? (
-            <div className="text-center py-20">
-              <Loader2 className="w-10 h-10 animate-spin text-blue-500 mx-auto mb-4" />
-              <p className="text-gray-500">Cargando libros...</p>
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {paginatedBooks.map(book => (
-                  <div 
-                    key={book.id} 
-                    onClick={() => setSelectedBookDetail(book)}
-                    className="bg-white p-4 rounded-lg shadow flex items-center space-x-4 cursor-pointer hover:shadow-lg hover:ring-2 hover:ring-blue-500 transition-all group"
-                  >
-                    <div className="relative">
-                      <img src={book.coverUrl} alt={book.title} className="w-16 h-24 object-cover rounded bg-gray-200" />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 rounded transition-colors flex items-center justify-center">
-                        <Info className="text-white opacity-0 group-hover:opacity-100 drop-shadow-md w-6 h-6" />
-                      </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {paginatedBooks.map(book => (
+              <div key={book.id} className={`bg-white p-4 rounded-lg shadow flex space-x-4 relative group ${!book.available ? 'opacity-90 bg-gray-50' : ''}`}>
+                <div className="relative shrink-0">
+                  <img src={book.coverUrl} alt={book.title} className="w-16 h-24 object-cover rounded bg-gray-200" />
+                  {!book.available && (
+                    <div className="absolute inset-0 bg-black/10 rounded flex items-center justify-center">
                     </div>
-                    <div>
-                      <h3 className="font-bold text-gray-800 line-clamp-2">{book.title}</h3>
-                      <p className="text-sm text-gray-500">{book.author}</p>
-                      <span className={`text-xs px-2 py-0.5 rounded-full mt-1 inline-block ${book.available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {book.available ? 'Disponible' : 'Agotado'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-                
-                {filteredBooks.length === 0 && (
-                  <div className="col-span-full text-center py-10 text-gray-400">
-                    <p>No se encontraron libros con los filtros seleccionados.</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Books Pagination Controls */}
-              {filteredBooks.length > ITEMS_PER_PAGE && (
-                <div className="flex justify-center items-center mt-8 space-x-4">
-                  <button 
-                    onClick={() => setBookPage(p => Math.max(1, p - 1))}
-                    disabled={bookPage === 1}
-                    className="p-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  >
-                    <ChevronLeft className="w-5 h-5" />
-                  </button>
-                  <span className="text-sm font-medium text-gray-600">
-                    Página {bookPage} de {totalBookPages}
-                  </span>
-                  <button 
-                    onClick={() => setBookPage(p => Math.min(totalBookPages, p + 1))}
-                    disabled={bookPage === totalBookPages}
-                    className="p-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  >
-                    <ChevronRight className="w-5 h-5" />
-                  </button>
+                  )}
                 </div>
-              )}
-            </>
-          )}
-
-          {/* Book Detail Modal */}
-          {selectedBookDetail && (
-            <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 animate-fade-in backdrop-blur-sm">
-              <div className="bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl flex flex-col md:flex-row relative">
-                <button 
-                  onClick={() => setSelectedBookDetail(null)}
-                  className="absolute top-4 right-4 bg-white/80 rounded-full p-1 text-gray-500 hover:text-red-500 hover:bg-white z-10"
-                >
-                  <X className="w-6 h-6" />
-                </button>
-                
-                <div className="md:w-1/3 h-64 md:h-auto bg-gray-100 relative">
-                  <img 
-                    src={selectedBookDetail.coverUrl} 
-                    alt={selectedBookDetail.title} 
-                    className="w-full h-full object-cover" 
-                  />
-                  <div className={`absolute bottom-0 left-0 right-0 p-2 text-center text-xs font-bold text-white ${selectedBookDetail.available ? 'bg-green-500/90' : 'bg-red-500/90'}`}>
-                    {selectedBookDetail.available ? 'DISPONIBLE' : 'AGOTADO'}
+                <div className="flex-1 overflow-hidden">
+                  <h3 className="font-bold text-gray-800 truncate" title={book.title}>{book.title}</h3>
+                  <p className="text-sm text-gray-500 truncate">{book.author}</p>
+                  <div className={`text-xs mt-1 inline-block px-2 py-0.5 rounded-full ${book.available ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    {book.available ? 'Disponible' : 'Agotado'}
                   </div>
                 </div>
-                
-                <div className="p-8 md:w-2/3 flex flex-col">
-                  <h2 className="text-2xl font-bold text-gray-800 mb-2">{selectedBookDetail.title}</h2>
-                  <p className="text-blue-600 font-medium mb-4 text-lg">{selectedBookDetail.author}</p>
-                  
-                  <div className="prose prose-sm text-gray-600 overflow-y-auto max-h-60 mb-6">
-                    <h4 className="font-bold text-gray-900 mb-1">Sinopsis</h4>
-                    <p>{selectedBookDetail.description}</p>
-                  </div>
-
-                  <div className="mt-auto pt-4 border-t border-gray-100 flex justify-between items-center">
+                <div className="absolute top-2 right-2 flex flex-col space-y-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button 
+                    onClick={() => handleEditClick(book)}
+                    className="p-2 bg-white rounded-full shadow-md text-gray-500 hover:text-blue-600"
+                    title="Editar libro"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  {!book.available && (
                     <button 
-                      onClick={() => startEditing(selectedBookDetail)}
-                      className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center"
+                      onClick={() => handleToggleAvailability(book)}
+                      className="p-2 bg-white rounded-full shadow-md text-red-500 hover:text-green-600 hover:bg-green-50"
+                      title="Marcar como Disponible (Restock)"
                     >
-                      <Pencil className="w-4 h-4 mr-2" />
-                      Editar
+                      <RefreshCcw className="w-4 h-4" />
                     </button>
-                    <button 
-                      onClick={() => setSelectedBookDetail(null)}
-                      className="bg-gray-100 text-gray-700 px-6 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors"
-                    >
-                      Cerrar
-                    </button>
-                  </div>
+                  )}
                 </div>
               </div>
+            ))}
+          </div>
+
+          {books.length > ITEMS_PER_PAGE && (
+            <div className="flex justify-center items-center mt-8 space-x-4">
+              <button
+                onClick={goToPrevPage}
+                disabled={currentPage === 1}
+                className="p-2 rounded-lg border bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <span className="text-sm font-medium text-gray-600">
+                Página {currentPage} de {totalPages || 1}
+              </span>
+              <button
+                onClick={goToNextPage}
+                disabled={currentPage === totalPages}
+                className="p-2 rounded-lg border bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
             </div>
           )}
         </div>
       )}
-
-      {/* LOANS VIEW */}
-      {view === 'LOANS' && (
-        <div className="space-y-8 no-print">
-           {/* Stats Overview */}
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100 flex items-center">
-                <div className="p-3 bg-blue-100 rounded-full text-blue-600 mr-4">
-                  <BookOpen className="w-6 h-6" />
-                </div>
-                <div>
-                  <p className="text-gray-500 text-sm">Préstamos Activos</p>
-                  <p className="text-2xl font-bold text-gray-800">{activeLoans.length}</p>
-                </div>
-              </div>
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-yellow-100 flex items-center">
-                <div className="p-3 bg-yellow-100 rounded-full text-yellow-600 mr-4">
-                  <Clock className="w-6 h-6" />
-                </div>
-                <div>
-                  <p className="text-gray-500 text-sm">Pendientes de Recoger</p>
-                  <p className="text-2xl font-bold text-gray-800">{pendingLoans.length}</p>
-                </div>
-              </div>
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-red-100 flex items-center">
-                <div className="p-3 bg-red-100 rounded-full text-red-600 mr-4">
-                  <AlertTriangle className="w-6 h-6" />
-                </div>
-                <div>
-                  <p className="text-gray-500 text-sm">Vencidos / Atrasados</p>
-                  <p className="text-2xl font-bold text-red-600">{overdueLoans.length}</p>
-                </div>
-              </div>
-           </div>
-
-           {/* Alerts Section (Overdue) */}
-           {overdueLoans.length > 0 && (
-             <div className="bg-red-50 border border-red-200 rounded-xl p-6">
-               <h3 className="text-red-800 font-bold flex items-center mb-4">
-                 <AlertTriangle className="w-5 h-5 mr-2" /> Vencidos - Atención Requerida ({overdueLoans.length})
-               </h3>
-               <div className="grid gap-3">
-                 {overdueLoans.map(loan => (
-                   <div key={loan.id} className="bg-white p-3 rounded-lg border border-red-100 flex justify-between items-center shadow-sm">
-                      <div>
-                        <p className="font-bold text-gray-800">{loan.studentName} <span className="text-gray-400 font-normal">({loan.studentMatricula})</span></p>
-                        <p className="text-sm text-gray-600">Libro: {loan.bookTitle}</p>
-                        <p className="text-xs text-red-600 font-semibold mt-1">Venció el: {loan.returnDate}</p>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => openReportModal(loan)}
-                          className="bg-gray-100 text-gray-700 px-3 py-1 rounded text-sm hover:bg-gray-200 font-medium flex items-center"
-                          title="Ver Reporte"
-                        >
-                           <FileText className="w-4 h-4 mr-1" /> Reporte
-                        </button>
-                        <button 
-                          onClick={() => markAsReturned(loan.id)}
-                          className="bg-red-100 text-red-700 px-3 py-1 rounded text-sm hover:bg-red-200 font-medium"
-                        >
-                          Marcar Devuelto
-                        </button>
-                      </div>
-                   </div>
-                 ))}
-               </div>
-             </div>
-           )}
-
-           {/* Alerts Section (Due Soon - 3 days) */}
-           {dueSoonLoans.length > 0 && (
-             <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6">
-               <h3 className="text-yellow-800 font-bold flex items-center mb-4">
-                 <Calendar className="w-5 h-5 mr-2" /> Próximos a Vencer (3 días)
-               </h3>
-               <div className="grid gap-3">
-                 {dueSoonLoans.map(loan => {
-                   const { diffDays } = getLoanStatusInfo(loan);
-                   return (
-                    <div key={loan.id} className="bg-white p-3 rounded-lg border border-yellow-100 flex justify-between items-center shadow-sm">
-                        <div>
-                          <p className="font-bold text-gray-800">{loan.studentName} <span className="text-gray-400 font-normal">({loan.studentMatricula})</span></p>
-                          <p className="text-sm text-gray-600">Libro: {loan.bookTitle}</p>
-                          <p className="text-xs text-yellow-600 font-semibold mt-1">
-                            Vence el: {loan.returnDate} {diffDays === 0 ? '(HOY)' : diffDays === 1 ? '(MAÑANA)' : `(en ${diffDays} días)`}
-                          </p>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => openReportModal(loan)}
-                            className="bg-gray-100 text-gray-700 px-3 py-1 rounded text-sm hover:bg-gray-200 font-medium flex items-center"
-                            title="Ver Reporte"
-                          >
-                            <FileText className="w-4 h-4 mr-1" /> Reporte
-                          </button>
-                          
-                          {loan.status !== 'OVERDUE' && (
-                            <button 
-                              onClick={() => markAsOverdue(loan.id)}
-                              className="bg-orange-50 text-orange-600 px-3 py-1 rounded text-sm hover:bg-orange-100 font-medium flex items-center"
-                              title="Marcar como Vencido"
-                            >
-                              <XCircle className="w-4 h-4" />
-                            </button>
-                          )}
-
-                          <button 
-                            onClick={() => markAsReturned(loan.id)}
-                            className="bg-blue-50 text-blue-700 px-3 py-1 rounded text-sm hover:bg-blue-100 font-medium"
-                          >
-                            Devolver
-                          </button>
-                        </div>
-                    </div>
-                   );
-                 })}
-               </div>
-             </div>
-           )}
-
-           {/* Active Loans Table */}
-           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-             <div className="p-4 border-b border-gray-100 bg-gray-50">
-               <h3 className="font-bold text-gray-700">Listado de Préstamos Activos</h3>
-             </div>
-             {activeLoans.length === 0 ? (
-               <div className="p-8 text-center text-gray-400">
-                 No hay préstamos activos en este momento.
-               </div>
-             ) : (
-               <>
-               <div className="overflow-x-auto">
-                 <table className="w-full text-left text-sm">
-                   <thead className="bg-gray-50 text-gray-600 border-b">
-                     <tr>
-                       <th className="p-4 font-medium">Alumno</th>
-                       <th className="p-4 font-medium">Libro</th>
-                       <th className="p-4 font-medium">Recogido</th>
-                       <th className="p-4 font-medium">Fecha Devolución Estimada</th>
-                       <th className="p-4 font-medium">Estado</th>
-                       <th className="p-4 font-medium text-right">Acción</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-gray-100">
-                     {paginatedLoans.map(loan => {
-                       const { isOverdue, isDueSoon, diffDays } = getLoanStatusInfo(loan);
-                       return (
-                         <tr key={loan.id} className="hover:bg-gray-50 transition-colors">
-                           <td className="p-4">
-                             <div className="font-bold text-gray-800">{loan.studentName}</div>
-                             <div className="text-xs text-gray-500 font-mono">{loan.studentMatricula}</div>
-                           </td>
-                           <td className="p-4 text-gray-700">{loan.bookTitle}</td>
-                           <td className="p-4 text-gray-500">{loan.pickupDate}</td>
-                           <td className="p-4">
-                             <div className="flex flex-col">
-                               <span className={`flex items-center gap-1.5 ${isOverdue ? 'text-red-600 font-bold' : isDueSoon ? 'text-yellow-600 font-bold' : 'text-gray-600'}`}>
-                                 {(isOverdue || isDueSoon) && <AlertTriangle className="w-3 h-3" />}
-                                 {loan.returnDate}
-                               </span>
-                               <span className="text-[10px] text-gray-400 mt-0.5">
-                                 {isOverdue 
-                                   ? (loan.status === 'OVERDUE' ? 'Marcado Vencido' : `Vencido hace ${Math.abs(diffDays)} días`)
-                                   : diffDays === 0 
-                                     ? 'Vence hoy' 
-                                     : diffDays === 1 
-                                        ? 'Vence mañana' 
-                                        : `Vence en ${diffDays} días`
-                                 }
-                               </span>
-                             </div>
-                           </td>
-                           <td className="p-4">
-                              <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                                isOverdue ? 'bg-red-100 text-red-700' : isDueSoon ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'
-                              }`}>
-                                {isOverdue ? 'ATRASADO' : isDueSoon ? 'POR VENCER' : 'AL CORRIENTE'}
-                              </span>
-                           </td>
-                           <td className="p-4 flex justify-end gap-2">
-                             <button
-                               onClick={() => openReportModal(loan)}
-                               className="text-gray-500 hover:text-blue-600 hover:bg-blue-50 p-2 rounded transition-colors"
-                               title="Ver Reporte"
-                             >
-                               <FileText className="w-5 h-5" />
-                             </button>
-
-                             {loan.status !== 'OVERDUE' && (
-                               <button 
-                                 onClick={() => markAsOverdue(loan.id)}
-                                 className="text-orange-600 hover:text-orange-800 hover:bg-orange-50 p-2 rounded transition-colors"
-                                 title="Marcar como Vencido"
-                               >
-                                 <XCircle className="w-5 h-5" />
-                               </button>
-                             )}
-
-                             <button 
-                               onClick={() => markAsReturned(loan.id)}
-                               className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-2 rounded transition-colors"
-                               title="Marcar como Devuelto"
-                             >
-                               <CheckCircle className="w-5 h-5" />
-                             </button>
-                           </td>
-                         </tr>
-                       );
-                     })}
-                   </tbody>
-                 </table>
-               </div>
-               
-               {/* Loans Pagination Controls */}
-               {activeLoans.length > ITEMS_PER_PAGE && (
-                <div className="flex justify-center items-center p-4 bg-gray-50 border-t border-gray-100 space-x-4">
-                  <button 
-                    onClick={() => setLoanPage(p => Math.max(1, p - 1))}
-                    disabled={loanPage === 1}
-                    className="p-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  >
-                    <ChevronLeft className="w-5 h-5" />
-                  </button>
-                  <span className="text-sm font-medium text-gray-600">
-                    Página {loanPage} de {totalLoanPages}
-                  </span>
-                  <button 
-                    onClick={() => setLoanPage(p => Math.min(totalLoanPages, p + 1))}
-                    disabled={loanPage === totalLoanPages}
-                    className="p-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  >
-                    <ChevronRight className="w-5 h-5" />
-                  </button>
-                </div>
-               )}
-               </>
-             )}
-           </div>
-        </div>
-      )}
-
-      {/* REPORT MODAL (APK Safe) */}
-      {viewingReport && (() => {
-         const { isOverdue } = getLoanStatusInfo(viewingReport);
-         const statusText = isOverdue ? "ATRASADO" : "ACTIVO";
-         const statusColor = isOverdue ? "bg-red-600" : "bg-green-600";
-         
-         return (
-            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100] backdrop-blur-sm print:bg-white print:static print:p-0 print:block">
-              <div id="printable-report" className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden">
-                <div className="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center print:hidden">
-                  <h3 className="font-bold text-lg text-gray-800 flex items-center">
-                    <FileText className="w-5 h-5 mr-2 text-blue-600" /> Reporte de Préstamo
-                  </h3>
-                  <button onClick={() => setViewingReport(null)} className="text-gray-400 hover:text-red-600">
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-
-                <div className="p-8 font-serif">
-                   <div className="text-center border-b-2 border-blue-600 pb-4 mb-6">
-                     <h1 className="text-2xl font-bold text-blue-700">BiblioTech</h1>
-                     <p className="text-xs uppercase tracking-widest text-gray-500 mt-1">Comprobante Oficial</p>
-                   </div>
-
-                   <div className="flex justify-between text-xs text-gray-400 mb-6">
-                      <span>ID: {viewingReport.id.slice(0, 8)}...</span>
-                      <span>{new Date().toLocaleDateString()}</span>
-                   </div>
-
-                   <div className="space-y-4">
-                      <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
-                         <p className="text-xs font-bold text-gray-400 uppercase mb-1">Alumno</p>
-                         <p className="font-bold text-lg text-gray-900">{viewingReport.studentName}</p>
-                         <p className="font-mono text-gray-600">{viewingReport.studentMatricula}</p>
-                      </div>
-
-                      <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
-                         <p className="text-xs font-bold text-gray-400 uppercase mb-1">Libro</p>
-                         <p className="font-bold text-gray-800">{viewingReport.bookTitle}</p>
-                         <p className="text-xs text-gray-500 mt-1">ID: {viewingReport.bookId}</p>
-                      </div>
-
-                      <div className="flex gap-4">
-                        <div className="flex-1">
-                          <p className="text-xs font-bold text-gray-400 uppercase">Recolección</p>
-                          <p className="font-medium">{viewingReport.pickupDate}</p>
-                        </div>
-                        <div className="flex-1 text-right">
-                          <p className="text-xs font-bold text-gray-400 uppercase">Vencimiento</p>
-                          <p className="font-bold text-red-600">{viewingReport.returnDate}</p>
-                        </div>
-                      </div>
-
-                      <div className="text-center mt-6 pt-4 border-t border-dashed border-gray-300">
-                        <span className={`inline-block px-4 py-1 rounded-full text-white text-xs font-bold ${statusColor}`}>
-                          ESTADO: {statusText}
-                        </span>
-                      </div>
-                   </div>
-
-                   <div className="mt-8 text-center text-[10px] text-gray-400">
-                     <p>BiblioTech System 2024</p>
-                   </div>
-                </div>
-
-                <div className="bg-gray-50 p-4 border-t border-gray-100 flex gap-3 print:hidden">
-                   <button 
-                     onClick={handlePrint}
-                     className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center justify-center"
-                   >
-                     <Printer className="w-4 h-4 mr-2" /> Imprimir
-                   </button>
-                   <button 
-                     onClick={() => setViewingReport(null)}
-                     className="flex-1 bg-white border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50"
-                   >
-                     Cerrar
-                   </button>
-                </div>
-              </div>
-            </div>
-         );
-      })()}
 
       {view === 'SCAN' && (
-        <div className="max-w-2xl mx-auto no-print">
-          <div className="bg-white p-8 rounded-2xl shadow-xl text-center">
-            <Scan className="w-16 h-16 mx-auto text-blue-600 mb-4" />
-            <h2 className="text-2xl font-bold mb-2">Escanear Solicitud</h2>
-            <p className="text-gray-500 mb-6">
-              Escanea el código QR del alumno o sube una imagen del mismo para validar el préstamo.
-            </p>
-            
-            {/* Camera Area */}
-            <div className="relative mb-6 bg-gray-900 rounded-2xl overflow-hidden shadow-inner aspect-[4/3] flex items-center justify-center">
-               {!isCameraActive && !scannedData && (
-                 <div className="text-center p-6 flex flex-col gap-3">
-                    <p className="text-gray-400 mb-2">La cámara está desactivada</p>
+        <div className="max-w-2xl mx-auto">
+          {!scannedData ? (
+            <div className="bg-white p-8 rounded-2xl shadow-xl text-center">
+              <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center justify-center">
+                <Scan className="w-6 h-6 mr-2 text-blue-600" /> Escanear QR
+              </h2>
+
+              {cameraError ? (
+                <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-4 text-sm font-medium">
+                  {cameraError}
+                </div>
+              ) : (
+                <div className="relative w-full max-w-sm mx-auto aspect-square bg-black rounded-xl overflow-hidden mb-6 shadow-inner">
+                  <video ref={videoRef} className="w-full h-full object-cover"></video>
+                  <canvas ref={canvasRef} className="hidden"></canvas>
+                  <div className="absolute inset-0 border-2 border-blue-500/50 pointer-events-none flex items-center justify-center">
+                    <div className="w-48 h-48 border-2 border-blue-400 rounded-lg relative">
+                      <div className="absolute top-0 left-0 w-4 h-4 border-t-4 border-l-4 border-blue-500 -mt-1 -ml-1"></div>
+                      <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-blue-500 -mt-1 -mr-1"></div>
+                      <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-blue-500 -mb-1 -ml-1"></div>
+                      <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-blue-500 -mb-1 -mr-1"></div>
+                    </div>
+                  </div>
+                  <div className="absolute bottom-4 left-0 right-0 text-center">
+                     <span className="bg-black/60 text-white text-xs px-3 py-1 rounded-full backdrop-blur-sm">
+                       Apunta la cámara al código del alumno
+                     </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Manual Input Section */}
+              <div className="mt-8 pt-6 border-t border-gray-100">
+                <details className="text-left group">
+                  <summary className="cursor-pointer text-sm font-medium text-gray-500 hover:text-blue-600 flex items-center">
+                    <Camera className="w-4 h-4 mr-2" />
+                    ¿Problemas con la cámara? Usar entrada manual
+                  </summary>
+                  <div className="mt-4 animate-fade-in">
+                    <textarea 
+                      className="w-full border p-3 rounded-lg mb-3 text-xs font-mono bg-gray-50 focus:ring-2 focus:ring-blue-200 outline-none"
+                      rows={3}
+                      placeholder='Pega el contenido del JSON del QR aquí...'
+                      value={scanInput}
+                      onChange={(e) => setScanInput(e.target.value)}
+                    />
                     <button 
-                      onClick={startCamera}
-                      className="bg-blue-600 text-white px-6 py-3 rounded-full font-bold hover:bg-blue-700 flex items-center justify-center w-full"
+                      onClick={simulateScan}
+                      disabled={!scanInput}
+                      className="w-full bg-gray-800 text-white px-4 py-2 rounded-lg font-medium hover:bg-black disabled:opacity-50 text-sm"
                     >
-                      <Camera className="w-5 h-5 mr-2" /> Activar Cámara
+                      Procesar Entrada Manual
                     </button>
-                    
-                    <div className="relative">
-                      <div className="absolute inset-0 flex items-center">
-                        <span className="w-full border-t border-gray-700" />
-                      </div>
-                      <div className="relative flex justify-center text-xs uppercase">
-                        <span className="bg-gray-900 px-2 text-gray-500">O también</span>
-                      </div>
-                    </div>
+                  </div>
+                </details>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 bg-white p-6 rounded-2xl shadow-xl border-l-4 border-green-500 animate-slide-up">
+              <h3 className="text-xl font-bold text-green-700 mb-4 flex items-center">
+                <Check className="w-6 h-6 mr-2" /> Solicitud Detectada
+              </h3>
+              
+              <div className="grid grid-cols-2 gap-4 text-sm mb-6">
+                <div>
+                  <p className="text-gray-500">Alumno</p>
+                  <p className="font-semibold text-lg">{scannedData.studentName}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Matrícula</p>
+                  <p className="font-semibold text-lg">{scannedData.studentMatricula}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-gray-500">Libro Solicitado</p>
+                  <p className="font-semibold text-lg text-blue-600">{scannedData.bookTitle}</p>
+                </div>
+                <div className="col-span-2 grid grid-cols-2 gap-4 bg-gray-50 p-3 rounded-lg">
+                  <div>
+                    <p className="text-gray-500 text-xs">Fecha Recogida</p>
+                    <p className="font-medium">{scannedData.pickupDate}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 text-xs">Fecha Entrega</p>
+                    <p className="font-medium">{scannedData.returnDate}</p>
+                  </div>
+                </div>
+              </div>
 
-                    <div className="relative">
-                      <input 
-                        ref={fileInputRef}
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={handleFileUpload}
-                      />
-                      <button 
-                        onClick={() => fileInputRef.current?.click()}
-                        className="bg-gray-700 text-white px-6 py-3 rounded-full font-bold hover:bg-gray-600 flex items-center justify-center w-full transition-colors"
-                      >
-                        <Upload className="w-5 h-5 mr-2" /> Subir Imagen QR
-                      </button>
-                    </div>
-                 </div>
-               )}
-               
-               {/* Video Element (Hidden when not active but needs to exist in DOM) */}
-               <video 
-                 ref={videoRef} 
-                 className={`absolute inset-0 w-full h-full object-cover ${!isCameraActive ? 'hidden' : 'block'}`} 
-                 muted 
-                 playsInline
-               ></video>
-               
-               {/* Hidden Canvas for Processing */}
-               <canvas ref={canvasRef} className="hidden"></canvas>
+              <div className="flex gap-4">
+                <button 
+                   onClick={() => setScannedData(null)}
+                   className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-bold hover:bg-gray-200 transition-colors"
+                >
+                   Cancelar
+                </button>
+                <button 
+                  onClick={confirmLoan}
+                  disabled={actionLoading}
+                  className="flex-1 bg-green-600 text-white py-3 rounded-lg font-bold hover:bg-green-700 shadow-lg transition-transform transform hover:scale-[1.02] flex items-center justify-center"
+                >
+                  {actionLoading ? <Loader2 className="w-5 h-5 animate-spin"/> : 'Aprobar Préstamo'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
-               {/* Overlay Guide */}
-               {isCameraActive && (
-                 <>
-                   {/* Flex Layout for Dark Masking (Top, Middle Row, Bottom) */}
-                   <div className="absolute inset-0 z-10 flex flex-col pointer-events-none">
-                     <div className="flex-1 bg-black/60 relative">
-                        {/* Status Pulse */}
-                        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center bg-black/50 backdrop-blur-sm px-4 py-1.5 rounded-full border border-white/10">
-                          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse mr-2"></div>
-                          <span className="text-white text-xs font-medium tracking-wide">Escaneando...</span>
-                        </div>
-                     </div>
-                     <div className="flex h-64">
-                       <div className="flex-1 bg-black/60"></div>
-                       <div className="w-64 relative border-4 border-white/20 rounded-lg overflow-hidden">
-                          {/* Laser Scan Animation */}
-                          <div className="absolute w-full h-1 bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.8)] animate-scan"></div>
-                          
-                          {/* Corner Markers */}
-                          <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-red-500"></div>
-                          <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-red-500"></div>
-                          <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-red-500"></div>
-                          <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-red-500"></div>
-                       </div>
-                       <div className="flex-1 bg-black/60"></div>
-                     </div>
-                     <div className="flex-1 bg-black/60"></div>
-                   </div>
-
-                   <button 
-                    onClick={stopCamera}
-                    className="absolute bottom-4 z-30 bg-red-600 text-white p-3 rounded-full shadow-lg hover:bg-red-700 left-1/2 transform -translate-x-1/2 pointer-events-auto"
-                    title="Detener Cámara"
-                   >
-                     <CameraOff className="w-6 h-6" />
-                   </button>
-                 </>
-               )}
+      {view === 'HISTORY' && (
+        <div className="space-y-6">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
+              <Filter className="w-5 h-5 mr-2 text-blue-600" /> Filtros de Búsqueda
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 text-gray-400 w-4 h-4" />
+                <input 
+                  type="text" 
+                  placeholder="Alumno, Matrícula o Libro" 
+                  className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                />
+              </div>
+              <div>
+                <select 
+                  className="w-full p-2 border rounded-lg text-sm bg-white"
+                  value={historyStatus}
+                  onChange={(e) => setHistoryStatus(e.target.value as any)}
+                >
+                  <option value="ALL">Todos los Estados</option>
+                  <option value="ACTIVE">En Préstamo (Al día)</option>
+                  <option value="RETURNED">Devueltos</option>
+                  <option value="PENDING">Pendientes de Entrega</option>
+                  <option value="OVERDUE">Vencidos (Atrasados)</option>
+                </select>
+              </div>
+              <div>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-bold">DE</span>
+                  <input 
+                    type="date" 
+                    className="w-full pl-10 pr-3 py-2 border rounded-lg text-sm"
+                    value={dateStart}
+                    onChange={(e) => setDateStart(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div>
+                 <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-gray-400 text-xs font-bold">A</span>
+                  <input 
+                    type="date" 
+                    className="w-full pl-10 pr-3 py-2 border rounded-lg text-sm"
+                    value={dateEnd}
+                    onChange={(e) => setDateEnd(e.target.value)}
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Scanned Data Modal */}
-          {scannedData && (
-            <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm animate-fade-in">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100">
-                <div className="bg-green-600 p-4 text-white flex justify-between items-center">
-                  <h3 className="text-lg font-bold flex items-center">
-                    <CheckCircle className="w-6 h-6 mr-2" /> Solicitud Válida
-                  </h3>
-                  <button 
-                    onClick={() => { setScannedData(null); startCamera(); }}
-                    className="text-white/80 hover:text-white hover:bg-green-700 p-1 rounded-full transition-colors"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                
-                <div className="p-6">
-                  <div className="grid grid-cols-1 gap-4 text-sm">
-                    <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-1">Alumno</p>
-                      <p className="font-bold text-lg text-gray-800">{scannedData.studentName}</p>
-                      <p className="font-mono text-gray-500">{scannedData.studentMatricula}</p>
-                    </div>
+          <div className="bg-white rounded-xl shadow overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-gray-50 text-gray-700 font-semibold">
+                  <tr>
+                    <th className="px-6 py-4">Alumno</th>
+                    <th className="px-6 py-4">Libro</th>
+                    <th className="px-6 py-4">Salida</th>
+                    <th className="px-6 py-4">F. Entrega</th>
+                    <th className="px-6 py-4">Estado</th>
+                    <th className="px-6 py-4 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredLoans.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                        No se encontraron préstamos con estos filtros.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredLoans.map((loan) => {
+                      const today = new Date();
+                      const todayStr = today.toISOString().split('T')[0];
+                      
+                      const isOverdue = loan.returnDate < todayStr;
+                      
+                      const threeDaysFromNow = new Date();
+                      threeDaysFromNow.setDate(today.getDate() + 3);
+                      const threeDaysStr = threeDaysFromNow.toISOString().split('T')[0];
+                      
+                      const isDueSoon = !isOverdue && loan.returnDate <= threeDaysStr && loan.returnDate >= todayStr;
+                      
+                      const showOverdueWarning = (isOverdue && loan.status === 'ACTIVE') || loan.status === 'OVERDUE';
+                      const showSoonWarning = isDueSoon && loan.status === 'ACTIVE';
 
-                    <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-1">Libro Solicitado</p>
-                      <p className="font-bold text-lg text-blue-600">{scannedData.bookTitle}</p>
-                      <div className="flex items-center mt-2">
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${
-                          scannedData.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
-                          scannedData.status === 'ACTIVE' ? 'bg-green-100 text-green-800' :
-                          'bg-gray-100 text-gray-800'
-                        }`}>
-                          Estado: {scannedData.status === 'PENDING' ? 'PENDIENTE DE ENTREGA' : scannedData.status}
-                        </span>
-                      </div>
-                    </div>
+                      return (
+                        <tr key={loan.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-6 py-4">
+                            <p className="font-medium text-gray-900">{loan.studentName}</p>
+                            <p className="text-xs text-gray-500">{loan.studentMatricula}</p>
+                          </td>
+                          <td className="px-6 py-4 font-medium text-gray-800">
+                            {loan.bookTitle}
+                          </td>
+                          <td className="px-6 py-4 text-gray-600">
+                            {loan.pickupDate}
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className={`flex items-center font-medium ${showOverdueWarning ? 'text-red-600' : showSoonWarning ? 'text-yellow-600' : 'text-blue-600'}`}>
+                              <Calendar className="w-4 h-4 mr-2" />
+                              {loan.returnDate}
+                              {showOverdueWarning && <span className="ml-2 text-[10px] bg-red-100 text-red-800 px-1.5 py-0.5 rounded-full font-bold">Vencido</span>}
+                              {showSoonWarning && <span className="ml-2 text-[10px] bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded-full font-bold">Pronto</span>}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            {loan.status === 'RETURNED' && (
+                              <span className="px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
+                                Devuelto
+                              </span>
+                            )}
+                            {loan.status === 'PENDING' && (
+                              <span className="px-2 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-700">
+                                Pendiente QR
+                              </span>
+                            )}
+                            {loan.status === 'ACTIVE' && (
+                              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${showOverdueWarning ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                {showOverdueWarning ? 'Vencido (Activo)' : 'En Préstamo'}
+                              </span>
+                            )}
+                            {loan.status === 'OVERDUE' && (
+                              <span className="px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200">
+                                Marcado Vencido
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <div className="flex justify-center items-center space-x-2">
+                              <button
+                                onClick={() => generateLoanPDF(loan)}
+                                className="text-xs bg-gray-50 text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded border border-gray-200 transition-colors flex items-center"
+                                title="Descargar Reporte PDF"
+                              >
+                                <FileText className="w-3 h-3" />
+                              </button>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-                        <p className="text-xs font-bold text-blue-600 uppercase mb-1">Fecha Recogida</p>
-                        <p className="font-bold text-gray-800">{scannedData.pickupDate}</p>
-                      </div>
-                      <div className="bg-orange-50 p-3 rounded-lg border border-orange-100 text-right">
-                        <p className="text-xs font-bold text-orange-600 uppercase mb-1">Fecha Entrega</p>
-                        <p className="font-bold text-gray-800">{scannedData.returnDate}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3 mt-8">
-                    <button 
-                      onClick={() => { setScannedData(null); startCamera(); }}
-                      className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 transition-colors"
-                    >
-                      Escanear Otro
-                    </button>
-                    <button 
-                      onClick={confirmLoan}
-                      className="flex-1 bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 shadow-lg shadow-green-200 transition-transform transform hover:scale-[1.02]"
-                    >
-                      Aprobar Préstamo
-                    </button>
-                  </div>
-                </div>
-              </div>
+                              {loan.status === 'ACTIVE' && (
+                                <button 
+                                  onClick={() => handleReturnBook(loan.id)}
+                                  className="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded border border-blue-200 transition-colors"
+                                >
+                                  Devuelto
+                                </button>
+                              )}
+                              
+                              {showOverdueWarning && loan.status === 'ACTIVE' && (
+                                <button 
+                                  onClick={() => handleMarkOverdue(loan.id)}
+                                  className="text-xs bg-red-50 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded border border-red-200 transition-colors flex items-center"
+                                  title="Marcar como Vencido"
+                                >
+                                  <AlertTriangle className="w-3 h-3 mr-1" /> Vencido
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
-          )}
+            <div className="px-6 py-3 bg-gray-50 text-xs text-gray-500 border-t flex justify-between">
+               <span>Mostrando {filteredLoans.length} registro(s)</span>
+            </div>
+          </div>
         </div>
       )}
     </div>
