@@ -11,10 +11,10 @@
   "dependencies": {
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
-    "lucide-react": "^0.556.0",
-    "react-qr-code": "^2.0.18",
-    "jspdf": "^2.5.2",
-    "jsqr": "^1.4.0",
+    "lucide-react": "0.344.0",
+    "react-qr-code": "2.0.12",
+    "jspdf": "2.5.1",
+    "jsqr": "1.4.0",
     "firebase": "^12.6.0"
   },
   "devDependencies": {
