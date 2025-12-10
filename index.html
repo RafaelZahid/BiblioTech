@@ -13,12 +13,27 @@
       }
       #root-loader {
         position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        text-align: center;
-        color: #6b7280;
-        font-family: sans-serif;
+        top: 0; left: 0; right: 0; bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #f3f4f6;
+        z-index: 1000;
+        transition: opacity 0.5s ease;
+      }
+      .loader-spinner {
+        border: 4px solid #e5e7eb;
+        border-top: 4px solid #2563eb;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin-bottom: 1rem;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
       }
       #global-error {
         display: none;
@@ -38,13 +53,15 @@
         var errorMsg = document.getElementById('global-error-msg');
         if (errorBox && errorMsg) {
           errorBox.style.display = 'block';
-          errorMsg.textContent = "Error crítico:\n" + msg + "\n\nEn: " + url + ":" + line;
-          document.getElementById('root-loader').style.display = 'none';
+          errorMsg.textContent = "Error del sistema:\n" + msg + "\n\nEn: " + url + ":" + line;
+          var loader = document.getElementById('root-loader');
+          if(loader) loader.style.display = 'none';
         }
         console.error("Global Error Caught:", error);
       };
     </script>
 
+    <!-- IMPORTANTE: Definimos las versiones exactas para evitar conflictos -->
     <script type="importmap">
 {
   "imports": {
@@ -70,15 +87,17 @@
     <div id="root"></div>
     
     <div id="root-loader">
-      <h2 style="font-size: 1.5rem; font-weight: bold; margin-bottom: 0.5rem;">BiblioTech</h2>
-      <p>Cargando aplicación...</p>
+      <div class="loader-spinner"></div>
+      <h2 style="font-size: 1.25rem; font-weight: 600; color: #1f2937; margin-bottom: 0.5rem;">BiblioTech</h2>
+      <p style="color: #6b7280;" id="loader-text">Iniciando sistema...</p>
     </div>
 
     <div id="global-error">
       <div style="max-width: 600px; margin: 0 auto; border: 1px solid #fecaca; background: #fef2f2; padding: 20px; border-radius: 8px;">
         <h3 style="color: #991b1b; font-weight: bold; margin-bottom: 10px;">No se pudo iniciar la aplicación</h3>
-        <pre id="global-error-msg" style="white-space: pre-wrap; color: #7f1d1d; font-size: 0.9em; font-family: monospace;"></pre>
-        <button onclick="window.location.reload()" style="margin-top: 15px; background: #dc2626; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Recargar página</button>
+        <p style="color: #7f1d1d; margin-bottom: 10px;">Ocurrió un error al cargar los módulos necesarios.</p>
+        <pre id="global-error-msg" style="white-space: pre-wrap; color: #b91c1c; font-size: 0.9em; font-family: monospace; background: rgba(255,255,255,0.5); padding: 10px; border-radius: 4px; border: 1px solid #fca5a5;"></pre>
+        <button onclick="window.location.reload()" style="margin-top: 15px; background: #dc2626; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold;">Intentar de nuevo</button>
       </div>
     </div>
 
@@ -86,12 +105,26 @@
     <script type="module" src="index.tsx"></script>
 
     <script>
+      // Fallback: Si en 8 segundos no carga, mostrar mensaje de ayuda
+      setTimeout(() => {
+        const loader = document.getElementById('root-loader');
+        const root = document.getElementById('root');
+        if (loader && loader.style.display !== 'none' && (!root || root.children.length === 0)) {
+           const text = document.getElementById('loader-text');
+           if(text) text.innerHTML = "La carga está tardando más de lo esperado.<br>Por favor, recarga la página.";
+           text.style.color = "#dc2626";
+        }
+      }, 8000);
+
       // Ocultar loader cuando React monte el contenido
       const observer = new MutationObserver((mutations) => {
         const root = document.getElementById('root');
         if (root && root.children.length > 0) {
           const loader = document.getElementById('root-loader');
-          if (loader) loader.style.display = 'none';
+          if (loader) {
+            loader.style.opacity = '0';
+            setTimeout(() => loader.style.display = 'none', 500);
+          }
           observer.disconnect();
         }
       });
